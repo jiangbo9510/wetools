@@ -188,7 +188,6 @@
 "screenshot.watermarkOpacity" = "透明度";
 "screenshot.watermarkOpacityHelp" = "向左透明度更低，向右透明度更高。";
 "screenshot.qrCopied" = "二维码内容已复制到剪贴板。";
-"recording.systemAudio" = "系统播放声音";
 "recording.microphone" = "麦克风";
 "recording.microphoneUnsupported" = "麦克风（暂不支持）";
 "recording.trim" = "剪辑时长";

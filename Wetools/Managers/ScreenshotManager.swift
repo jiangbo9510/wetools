@@ -219,7 +219,7 @@ final class ScreenshotManager {
         hostingView.layoutSubtreeIfNeeded()
         let fittingSize = hostingView.fittingSize
         let panelSize = NSSize(
-            width: min(max(260, fittingSize.width), screen.visibleFrame.width - 24),
+            width: min(max(200, fittingSize.width), screen.visibleFrame.width - 24),
             height: min(max(56, fittingSize.height), screen.visibleFrame.height - 24)
         )
         let availableFrame = screen.visibleFrame
@@ -1507,20 +1507,13 @@ private struct ScreenRecordingControlView: View {
     var body: some View {
         HStack(spacing: 12) {
             recordingToggle(
-                localization.string("recording.systemAudio"),
-                systemImage: "speaker.wave.2",
+                localization.string("recording.microphone"),
+                systemImage: "mic",
                 isOn: Binding(
-                    get: { manager.includeSystemAudio },
-                    set: { manager.includeSystemAudio = $0 }
+                    get: { manager.includeMicrophone },
+                    set: { manager.includeMicrophone = $0 }
                 ),
                 isDisabled: false
-            )
-
-            recordingToggle(
-                localization.string("recording.microphoneUnsupported"),
-                systemImage: "mic",
-                isOn: .constant(false),
-                isDisabled: true
             )
 
             Button(localization.string("recording.start"), action: onStart)

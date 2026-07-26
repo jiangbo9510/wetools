@@ -188,7 +188,6 @@
 "screenshot.watermarkOpacity" = "Opacity";
 "screenshot.watermarkOpacityHelp" = "Drag left for lower opacity and right for higher opacity.";
 "screenshot.qrCopied" = "QR code content copied to clipboard.";
-"recording.systemAudio" = "App/System Audio";
 "recording.microphone" = "Microphone";
 "recording.microphoneUnsupported" = "Microphone (Not Supported)";
 "recording.trim" = "Trim";

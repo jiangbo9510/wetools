@@ -12,7 +12,7 @@ final class AppSettings: ObservableObject {
         var defaultSaveDirectory: String
         var appLanguage: AppLanguage
         var ocrLanguagePreference: OCRLanguagePreference
-        var recordingSystemAudio: Bool
+        var recordingMicrophone: Bool
 
         init(
             screenshotHotKey: HotKey,
@@ -23,7 +23,7 @@ final class AppSettings: ObservableObject {
             defaultSaveDirectory: String,
             appLanguage: AppLanguage,
             ocrLanguagePreference: OCRLanguagePreference,
-            recordingSystemAudio: Bool
+            recordingMicrophone: Bool
         ) {
             self.screenshotHotKey = screenshotHotKey
             self.clipboardHistoryHotKey = clipboardHistoryHotKey
@@ -33,7 +33,7 @@ final class AppSettings: ObservableObject {
             self.defaultSaveDirectory = defaultSaveDirectory
             self.appLanguage = appLanguage
             self.ocrLanguagePreference = ocrLanguagePreference
-            self.recordingSystemAudio = recordingSystemAudio
+            self.recordingMicrophone = recordingMicrophone
         }
 
         init(from decoder: Decoder) throws {
@@ -46,9 +46,9 @@ final class AppSettings: ObservableObject {
             defaultSaveDirectory = try container.decode(String.self, forKey: .defaultSaveDirectory)
             appLanguage = try container.decodeIfPresent(AppLanguage.self, forKey: .appLanguage) ?? .system
             ocrLanguagePreference = try container.decodeIfPresent(OCRLanguagePreference.self, forKey: .ocrLanguagePreference) ?? .automatic
-            recordingSystemAudio = try container.decodeIfPresent(
+            recordingMicrophone = try container.decodeIfPresent(
                 Bool.self,
-                forKey: .recordingSystemAudio
+                forKey: .recordingMicrophone
             ) ?? false
         }
     }
@@ -85,7 +85,7 @@ final class AppSettings: ObservableObject {
         didSet { persistChange() }
     }
 
-    @Published var recordingSystemAudio: Bool {
+    @Published var recordingMicrophone: Bool {
         didSet { persistChange() }
     }
 
@@ -106,7 +106,7 @@ final class AppSettings: ObservableObject {
         defaultSaveDirectory = snapshot.defaultSaveDirectory
         appLanguage = snapshot.appLanguage.resolved
         ocrLanguagePreference = snapshot.ocrLanguagePreference
-        recordingSystemAudio = snapshot.recordingSystemAudio
+        recordingMicrophone = snapshot.recordingMicrophone
         isLoading = false
         if snapshot.appLanguage == .system {
             store.save(self.snapshot())
@@ -135,7 +135,7 @@ final class AppSettings: ObservableObject {
             defaultSaveDirectory: defaultSaveDirectory,
             appLanguage: appLanguage,
             ocrLanguagePreference: ocrLanguagePreference,
-            recordingSystemAudio: recordingSystemAudio
+            recordingMicrophone: recordingMicrophone
         )
     }
 
@@ -155,7 +155,7 @@ final class AppSettings: ObservableObject {
             defaultSaveDirectory: FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first?.path ?? NSHomeDirectory(),
             appLanguage: .systemDefault,
             ocrLanguagePreference: .automatic,
-            recordingSystemAudio: false
+            recordingMicrophone: false
         )
     }
 }

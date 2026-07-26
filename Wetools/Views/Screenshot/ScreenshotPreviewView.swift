@@ -537,6 +537,9 @@ struct ScreenshotPreviewView: View {
     private static let watermarkPanelLevel = NSWindow.Level(
         rawValue: NSWindow.Level.screenSaver.rawValue + 1
     )
+    private static let resultWindowLevel = NSWindow.Level(
+        rawValue: NSWindow.Level.screenSaver.rawValue + 2
+    )
 
     private var currentToolbarSize: CGSize {
         toolbarSize(for: displayRect)
@@ -1397,8 +1400,24 @@ struct ScreenshotPreviewView: View {
         var pinnedWindow: PinnedScreenshotWindow!
         let pinnedSize = output.size
         let pinnedOrigin: NSPoint
-        if let editorFrame = editorWindow?.frame {
-            pinnedOrigin = NSPoint(x: editorFrame.minX, y: editorFrame.maxY - pinnedSize.height)
+        if let editorWindow, let displayRect {
+            let contentHeight = editorWindow.contentView?.bounds.height ?? editorWindow.contentLayoutRect.height
+            let localRect = NSRect(
+                x: displayRect.minX,
+                y: contentHeight - displayRect.maxY,
+                width: displayRect.width,
+                height: displayRect.height
+            )
+            let screenRect = editorWindow.convertToScreen(localRect)
+            pinnedOrigin = NSPoint(
+                x: screenRect.minX,
+                y: screenRect.maxY - pinnedSize.height
+            )
+        } else if let editorFrame = editorWindow?.frame {
+            pinnedOrigin = NSPoint(
+                x: editorFrame.minX,
+                y: editorFrame.maxY - pinnedSize.height
+            )
         } else {
             pinnedOrigin = NSEvent.mouseLocation
         }
@@ -1459,7 +1478,10 @@ struct ScreenshotPreviewView: View {
         )
         window.isReleasedWhenClosed = false
         window.isFloatingPanel = true
-        window.level = .floating
+        window.level = Self.resultWindowLevel
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.hidesOnDeactivate = false
+        window.isMovableByWindowBackground = true
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = true
@@ -1477,6 +1499,7 @@ struct ScreenshotPreviewView: View {
             window.setFrameOrigin(NSPoint(x: mouse.x - 210, y: mouse.y - 150))
         }
         ocrWindow = window
+        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
     }
@@ -2132,10 +2155,7 @@ private struct OCRTextFloatingView: View {
             .padding(.top, 10)
             .padding(.bottom, 4)
 
-            TextEditor(text: $text)
-                .font(.system(size: 13))
-                .scrollContentBackground(.hidden)
-                .background(Color(nsColor: .textBackgroundColor))
+            OCRScrollableTextView(text: $text, isEditable: isEditable)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.horizontal, 12)
 
@@ -2144,15 +2164,88 @@ private struct OCRTextFloatingView: View {
                 Button(localization.string("common.edit")) {
                     isEditable.toggle()
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+                .controlSize(.regular)
+                .frame(minWidth: 72)
+
                 Button(localization.string("common.copy")) {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+                .controlSize(.regular)
+                .frame(minWidth: 72)
             }
             .padding(12)
         }
         .frame(width: 420, height: 300)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+private struct OCRScrollableTextView: NSViewRepresentable {
+    @Binding var text: String
+    let isEditable: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
+
+        let textView = NSTextView()
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.isSelectable = true
+        textView.isEditable = isEditable
+        textView.allowsUndo = true
+        textView.font = .systemFont(ofSize: 13)
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.string = text
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = context.coordinator.textView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+        let becameEditable = isEditable && !textView.isEditable
+        textView.isEditable = isEditable
+        if becameEditable {
+            DispatchQueue.main.async {
+                textView.window?.makeFirstResponder(textView)
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        @Binding var text: String
+        weak var textView: NSTextView?
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text = textView.string
+        }
     }
 }
 
@@ -2204,7 +2297,9 @@ private struct PinnedScreenshotView: View {
                 .resizable()
                 .frame(width: image.size.width, height: image.size.height)
 
-            PinnedWindowDragView()
+            PinnedWindowDragView { hovering in
+                isHovering = hovering
+            }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if isHovering {
@@ -2220,21 +2315,53 @@ private struct PinnedScreenshotView: View {
             }
         }
         .background(Color.clear)
-        .onHover { hovering in
-            isHovering = hovering
-        }
     }
 }
 
 private struct PinnedWindowDragView: NSViewRepresentable {
+    let onHoverChanged: (Bool) -> Void
+
     func makeNSView(context: Context) -> PinnedWindowDragNSView {
-        PinnedWindowDragNSView()
+        PinnedWindowDragNSView(onHoverChanged: onHoverChanged)
     }
 
-    func updateNSView(_ nsView: PinnedWindowDragNSView, context: Context) {}
+    func updateNSView(_ nsView: PinnedWindowDragNSView, context: Context) {
+        nsView.onHoverChanged = onHoverChanged
+    }
 }
 
 private final class PinnedWindowDragNSView: NSView {
+    var onHoverChanged: (Bool) -> Void
+
+    init(onHoverChanged: @escaping (Bool) -> Void) {
+        self.onHoverChanged = onHoverChanged
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged(false)
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.performDrag(with: event)
     }
