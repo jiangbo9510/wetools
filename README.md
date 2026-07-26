@@ -86,9 +86,9 @@ wetools/
 - App: application lifecycle, menu bar status item, window orchestration.
 - Core: observable app state and shared value types.
 - Localization: app language selection and runtime localized string lookup.
-- Models: provider, OCR, and future domain data models.
+- Models: OCR and other domain data models.
 - Managers: macOS integration and side-effect-heavy system workflows.
-- Services: Keychain, OCR, LLM provider storage, and network clients.
+- Services: macOS-native OCR, translation, and system integration services.
 - Stores: JSON and file persistence only.
 - Views: SwiftUI presentation with no business or storage logic.
 
@@ -109,18 +109,12 @@ Wetools/
 │   ├── HotKeyManager.swift
 │   └── PermissionManager.swift
 ├── Models/
-│   ├── LLMProvider.swift
 │   └── OCRModels.swift
 ├── Services/
-│   ├── KeychainService.swift
-│   ├── LLMClient.swift
-│   ├── LLMProviderStore.swift
 │   └── OCRManager.swift
 ├── Stores/
 │   └── JSONFileStore.swift
 ├── Views/
-│   ├── AI/
-│   │   └── AISettingsView.swift
 │   ├── Screenshot/
 │   │   ├── OCRResultView.swift
 │   │   └── ScreenshotPreviewView.swift
@@ -143,20 +137,16 @@ Wetools/
 Example:
 
 ```swift
-Text(localization.string("settings.tab.aiOCR"))
-Button(localization.string("common.save")) { saveProvider() }
+Text(localization.string("settings.title"))
+Button(localization.string("common.save")) { saveSettings() }
 ```
 
-## AI / OCR
+## OCR and Translation
 
-- `LLMProvider` stores provider metadata only. API keys are referenced by `apiKeySecretRef`.
-- `KeychainService` stores, reads, updates, and deletes secrets in macOS Keychain.
-- `LLMProviderStore` persists provider configuration to local JSON and keeps secrets out of JSON.
-- `LLMClient` defines `chat`, `visionAnalyze`, and `testConnection`.
-- `OpenAICompatibleLLMClient` uses the Chat Completions format and tests `/v1/models`.
-- `OllamaLLMClient` tests `/api/tags`.
-- `CustomHTTPLLMClient` tests the configured `baseURL`.
-- `OCRManager` uses Apple Vision local OCR with `zh-Hans` and `en-US` recognition languages.
+- Text recognition uses the macOS Apple Vision framework and runs locally.
+- Translation uses the translation capability built into macOS.
+- These features do not require third-party services or credentials.
+- Screenshot content is not uploaded by OCR or translation.
 
 ## Implementation Phases
 
