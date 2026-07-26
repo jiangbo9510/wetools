@@ -1,0 +1,10 @@
+build/
+.build/
+dist/
+debug_output/
+tmp/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+*.dmg
+*.zip
