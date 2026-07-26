@@ -868,6 +868,8 @@ final class ScreenshotManager {
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = false
+        window.level = .screenSaver
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         positionPreviewWindow(window, image: image, sourceRect: sourceRect, previewScreen: previewScreen, usesFullScreenCanvas: usesFullScreenCanvas)
         let controller = NSWindowController(window: window)
         previewWindowController = controller

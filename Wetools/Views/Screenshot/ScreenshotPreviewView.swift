@@ -47,9 +47,10 @@ struct ScreenshotPreviewView: View {
     @State private var isTranslationTargetPickerPresented = false
     @State private var suppressTextCreationOnGestureEnd = false
     @State private var toolbarPosition: CGPoint?
-    @State private var toolbarDragStartPosition: CGPoint?
+    @State private var secondaryOptionsAbove: Bool?
     @State private var isMovingSelection = false
     @State private var zoomScale: CGFloat = 1
+    @GestureState private var toolbarDragTranslation: CGSize = .zero
     @FocusState private var isTextEditorFocused: Bool
 
     private let ocrManager = OCRManager()
@@ -60,13 +61,15 @@ struct ScreenshotPreviewView: View {
 
             if shouldShowToolbar, let toolbarRect {
                 toolBar
-                    .simultaneousGesture(toolbarDragGesture())
                     .frame(width: toolbarRect.width, height: toolbarRect.height, alignment: .topLeading)
                     .position(x: toolbarRect.midX, y: toolbarRect.midY)
+                    .offset(visibleToolbarDragTranslation)
+                    .simultaneousGesture(toolbarDragGesture())
             } else if shouldShowToolbar {
                 toolBar
-                    .simultaneousGesture(toolbarDragGesture())
                     .frame(width: currentToolbarSize.width, height: currentToolbarSize.height, alignment: .topLeading)
+                    .offset(visibleToolbarDragTranslation)
+                    .simultaneousGesture(toolbarDragGesture())
             }
 
             if let errorMessage {
@@ -99,21 +102,29 @@ struct ScreenshotPreviewView: View {
                         ]).width + 20),
                         max(52, proxy.size.width - 16)
                     )
+                    let tooltipTextBounds = (title as NSString).boundingRect(
+                        with: CGSize(width: max(32, tooltipWidth - 20), height: .greatestFiniteMagnitude),
+                        options: [.usesLineFragmentOrigin, .usesFontLeading],
+                        attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium)]
+                    )
+                    let tooltipHeight = max(30, ceil(tooltipTextBounds.height) + 12)
+                    let resolvedTooltipPosition = tooltipPosition(
+                        for: rect,
+                        size: CGSize(width: tooltipWidth, height: tooltipHeight),
+                        canvasSize: proxy.size
+                    )
                     Text(title)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(nil)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
+                        .frame(width: tooltipWidth)
                         .background(.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 6))
                         .shadow(radius: 8, y: 3)
-                        .fixedSize(horizontal: true, vertical: true)
-                        .position(
-                            x: min(
-                                max(rect.midX, tooltipWidth / 2 + 8),
-                                proxy.size.width - tooltipWidth / 2 - 8
-                            ),
-                            y: max(18, rect.minY - 44)
-                        )
+                        .fixedSize(horizontal: false, vertical: true)
+                        .position(resolvedTooltipPosition)
                         .transition(.opacity)
                         .allowsHitTesting(false)
                 }
@@ -183,12 +194,6 @@ struct ScreenshotPreviewView: View {
                 Rectangle()
                     .fill(Color.clear)
                     .contentShape(Rectangle())
-                    .onTapGesture {
-                        if activeTextEdit != nil {
-                            suppressTextCreationOnGestureEnd = true
-                            commitActiveTextEdit()
-                        }
-                    }
                     .gesture(drawGesture(for: selectedTool, in: imageRect))
             }
 
@@ -214,11 +219,52 @@ struct ScreenshotPreviewView: View {
                 .position(x: imageRect.midX, y: imageRect.midY)
                 .allowsHitTesting(false)
         }
+        .contentShape(Rectangle())
+        .onContinuousHover { phase in
+            guard activeAnnotationEdit == nil,
+                  activeTextEdit == nil,
+                  draftAnnotation == nil else {
+                return
+            }
+            let hoveredID: UUID?
+            switch phase {
+            case let .active(location):
+                hoveredID = imageRect.contains(location)
+                    ? hitAnnotation(at: location, in: imageRect)?.annotation.id
+                    : nil
+            case .ended:
+                hoveredID = nil
+            }
+            if selectedAnnotationID != hoveredID {
+                selectedAnnotationID = hoveredID
+            }
+        }
     }
 
     private var toolBar: some View {
-        VStack(alignment: toolbarPlacement.horizontal == .leading ? .leading : .trailing, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(
+            alignment: toolbarPlacement.horizontal == .leading ? .leading : .trailing,
+            spacing: Self.toolbarSpacing
+        ) {
+            if hasSecondaryToolbar, secondaryOptionsAreAboveToolbar {
+                secondaryOptionsBar
+                    .frame(height: Self.secondaryToolbarHeight)
+            }
+
+            mainToolbar
+
+            if hasSecondaryToolbar, !secondaryOptionsAreAboveToolbar {
+                secondaryOptionsBar
+                    .frame(height: Self.secondaryToolbarHeight)
+            }
+        }
+        .frame(width: currentToolbarSize.width, height: currentToolbarSize.height, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.12), value: hoveredToolNameKey)
+    }
+
+    private var mainToolbar: some View {
+        HStack(spacing: 6) {
                 toolbarDragHandle
                     .frame(width: 22, height: 30)
 
@@ -366,27 +412,24 @@ struct ScreenshotPreviewView: View {
                 }
                 .help(localization.string("screenshot.finishToClipboard"))
                 .toolbarTooltip("screenshot.finishToClipboard", hoveredToolNameKey: $hoveredToolNameKey, localization: localization)
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 16, weight: .medium))
-            .controlSize(.large)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 12)
-            .frame(width: currentToolbarSize.width)
-            .contentShape(Rectangle())
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-
-            Group {
-                if let selectedTool, selectedTool.usesStrokeStyle {
-                    strokeOptionsBar
-                } else if selectedTool == .text {
-                    textOptionsBar
-                }
-            }
         }
-        .frame(width: currentToolbarSize.width, height: currentToolbarSize.height, alignment: .topLeading)
+        .buttonStyle(.borderless)
+        .font(.system(size: 16, weight: .medium))
+        .controlSize(.large)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 12)
+        .frame(width: currentToolbarSize.width, height: Self.mainToolbarHeight)
         .contentShape(Rectangle())
-        .animation(.easeOut(duration: 0.12), value: hoveredToolNameKey)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var secondaryOptionsBar: some View {
+        if let selectedTool, selectedTool.usesStrokeStyle {
+            strokeOptionsBar
+        } else if selectedTool == .text {
+            textOptionsBar
+        }
     }
 
     private var toolbarDragHandle: some View {
@@ -486,19 +529,55 @@ struct ScreenshotPreviewView: View {
     }
 
     private static let standardTextFontSizes: [Double] = [12, 16, 24, 32, 48, 72, 96]
+    private static let mainToolbarHeight: CGFloat = 62
+    private static let secondaryToolbarHeight: CGFloat = 42
+    private static let toolbarSpacing: CGFloat = 8
+    private static let expandedToolbarHeight =
+        mainToolbarHeight + toolbarSpacing + secondaryToolbarHeight
+    private static let watermarkPanelLevel = NSWindow.Level(
+        rawValue: NSWindow.Level.screenSaver.rawValue + 1
+    )
 
     private var currentToolbarSize: CGSize {
         toolbarSize(for: displayRect)
     }
 
+    private var hasSecondaryToolbar: Bool {
+        selectedTool?.usesStrokeStyle == true || selectedTool == .text
+    }
+
+    private var secondaryOptionsAreAboveToolbar: Bool {
+        let lockedDirection = secondaryOptionsAbove ?? preferredSecondaryOptionsAreAbove(at: toolbarPosition)
+        guard hasSecondaryToolbar,
+              toolbarDragTranslation != .zero,
+              let startPosition = toolbarPosition else {
+            return lockedDirection
+        }
+        let translation = constrainedToolbarTranslation(toolbarDragTranslation)
+        let livePosition = CGPoint(
+            x: startPosition.x + translation.width,
+            y: startPosition.y + translation.height
+        )
+        return edgeAdjustedSecondaryOptionsAreAbove(
+            at: livePosition,
+            fallback: lockedDirection
+        )
+    }
+
     private func toolbarSize(for rect: CGRect?) -> CGSize {
         let availableWidth = max(240, canvasSizeForLayout?.width ?? 720)
-        let hasSecondaryOptions = selectedTool?.usesStrokeStyle == true || selectedTool == .text
-        return CGSize(width: min(availableWidth, 700), height: hasSecondaryOptions ? 112 : 62)
+        return CGSize(
+            width: min(availableWidth, 700),
+            height: hasSecondaryToolbar ? Self.expandedToolbarHeight : Self.mainToolbarHeight
+        )
     }
 
     private var shouldShowToolbar: Bool {
         !isMovingSelection
+    }
+
+    private var visibleToolbarDragTranslation: CGSize {
+        constrainedToolbarTranslation(toolbarDragTranslation)
     }
 
     private var toolbarRect: CGRect? {
@@ -513,8 +592,25 @@ struct ScreenshotPreviewView: View {
         } else {
             return nil
         }
-        let rect = CGRect(x: position.x - size.width / 2, y: position.y - size.height / 2, width: size.width, height: size.height)
-        return clampToolbar(rect, in: CGRect(origin: .zero, size: canvasSize).insetBy(dx: 0, dy: 8))
+        let extraHeight = size.height - Self.mainToolbarHeight
+        let originY = position.y - Self.mainToolbarHeight / 2 -
+            (hasSecondaryToolbar && secondaryOptionsAreAboveToolbar ? extraHeight : 0)
+        let rect = CGRect(
+            x: position.x - size.width / 2,
+            y: originY,
+            width: size.width,
+            height: size.height
+        )
+        let bounds = CGRect(origin: .zero, size: canvasSize).insetBy(dx: 8, dy: 8)
+        guard rect.minX < bounds.minX || rect.maxX > bounds.maxX else {
+            return rect
+        }
+        return CGRect(
+            x: min(max(rect.minX, bounds.minX), max(bounds.minX, bounds.maxX - rect.width)),
+            y: rect.minY,
+            width: rect.width,
+            height: rect.height
+        )
     }
 
     private func defaultToolbarRect(for displayRect: CGRect) -> CGRect? {
@@ -588,25 +684,172 @@ struct ScreenshotPreviewView: View {
 
     private func toolbarDragGesture() -> some Gesture {
         DragGesture(minimumDistance: 2)
-            .onChanged { value in
-                let canvasSize = canvasSizeForLayout ?? NSApp.keyWindow?.contentView?.bounds.size
-                guard let canvasSize else { return }
-                if toolbarDragStartPosition == nil {
-                    toolbarDragStartPosition = toolbarPosition ?? toolbarRect.map { CGPoint(x: $0.midX, y: $0.midY) }
-                }
-                guard let toolbarDragStartPosition else { return }
-                let proposed = CGPoint(
-                    x: toolbarDragStartPosition.x + value.translation.width,
-                    y: toolbarDragStartPosition.y + value.translation.height
+            .updating($toolbarDragTranslation) { value, translation, _ in
+                translation = value.translation
+            }
+            .onEnded { value in
+                guard let startPosition = toolbarPosition ?? toolbarRect.map({ toolbarMainPosition(in: $0) }) else { return }
+                let translation = constrainedToolbarTranslation(value.translation)
+                let finalPosition = CGPoint(
+                    x: startPosition.x + translation.width,
+                    y: startPosition.y + translation.height
                 )
-                let size = currentToolbarSize
-                let rect = CGRect(x: proposed.x - size.width / 2, y: proposed.y - size.height / 2, width: size.width, height: size.height)
-                let clamped = clampToolbar(rect, in: CGRect(origin: .zero, size: canvasSize).insetBy(dx: 0, dy: 8))
-                toolbarPosition = CGPoint(x: clamped.midX, y: clamped.midY)
+                toolbarPosition = finalPosition
+                if hasSecondaryToolbar {
+                    let lockedDirection =
+                        secondaryOptionsAbove ?? preferredSecondaryOptionsAreAbove(at: startPosition)
+                    secondaryOptionsAbove = edgeAdjustedSecondaryOptionsAreAbove(
+                        at: finalPosition,
+                        fallback: lockedDirection
+                    )
+                }
             }
-            .onEnded { _ in
-                toolbarDragStartPosition = nil
+    }
+
+    private func constrainedToolbarTranslation(_ translation: CGSize) -> CGSize {
+        guard let position = toolbarPosition ?? toolbarRect.map({ toolbarMainPosition(in: $0) }) else {
+            return translation
+        }
+        let canvasSize = canvasSizeForLayout ?? NSApp.keyWindow?.contentView?.bounds.size
+        guard let canvasSize else { return translation }
+        let mainToolbarRect = CGRect(
+            x: position.x - currentToolbarSize.width / 2,
+            y: position.y - Self.mainToolbarHeight / 2,
+            width: currentToolbarSize.width,
+            height: Self.mainToolbarHeight
+        )
+        let minimumX = -mainToolbarRect.minX
+        let maximumX = canvasSize.width - mainToolbarRect.maxX
+        let minimumY = -mainToolbarRect.minY
+        let maximumY = canvasSize.height - mainToolbarRect.maxY
+        return CGSize(
+            width: min(max(translation.width, minimumX), maximumX),
+            height: min(max(translation.height, minimumY), maximumY)
+        )
+    }
+
+    private func tooltipPosition(for anchor: CGRect, size: CGSize, canvasSize: CGSize) -> CGPoint {
+        let margin: CGFloat = 8
+        let spacing: CGFloat = 8
+        let halfWidth = size.width / 2
+        let halfHeight = size.height / 2
+        let aboveY = anchor.minY - spacing - halfHeight
+        let belowY = anchor.maxY + spacing + halfHeight
+        let preferredY = aboveY - halfHeight >= margin ? aboveY : belowY
+        return CGPoint(
+            x: min(max(anchor.midX, margin + halfWidth), canvasSize.width - margin - halfWidth),
+            y: min(max(preferredY, margin + halfHeight), canvasSize.height - margin - halfHeight)
+        )
+    }
+
+    private func toolbarMainPosition(in rect: CGRect) -> CGPoint {
+        CGPoint(
+            x: rect.midX,
+            y: secondaryOptionsAreAboveToolbar
+                ? rect.maxY - Self.mainToolbarHeight / 2
+                : rect.minY + Self.mainToolbarHeight / 2
+        )
+    }
+
+    private func preferredSecondaryOptionsAreAbove(at proposedPosition: CGPoint?) -> Bool {
+        guard let canvasSize = canvasSizeForLayout ?? NSApp.keyWindow?.contentView?.bounds.size else {
+            return toolbarPlacement.vertical == .top
+        }
+        guard let position = proposedPosition ?? toolbarPosition else {
+            return toolbarPlacement.vertical == .top
+        }
+
+        let margin: CGFloat = 8
+        let extraHeight = Self.expandedToolbarHeight - Self.mainToolbarHeight
+        let mainTop = position.y - Self.mainToolbarHeight / 2
+        let mainBottom = position.y + Self.mainToolbarHeight / 2
+        let aboveRect = CGRect(
+            x: position.x - currentToolbarSize.width / 2,
+            y: mainTop - extraHeight,
+            width: currentToolbarSize.width,
+            height: extraHeight
+        )
+        let belowRect = CGRect(
+            x: position.x - currentToolbarSize.width / 2,
+            y: mainBottom,
+            width: currentToolbarSize.width,
+            height: extraHeight
+        )
+        let canvasBounds = CGRect(origin: .zero, size: canvasSize).insetBy(dx: margin, dy: margin)
+        let aboveFits = aboveRect.minY >= canvasBounds.minY
+        let belowFits = belowRect.maxY <= canvasBounds.maxY
+        let aboveAvoidsScreenshot = displayRect.map { !aboveRect.intersects($0) } ?? true
+        let belowAvoidsScreenshot = displayRect.map { !belowRect.intersects($0) } ?? true
+
+        if aboveFits, aboveAvoidsScreenshot, !(belowFits && belowAvoidsScreenshot) {
+            return true
+        }
+        if belowFits, belowAvoidsScreenshot, !(aboveFits && aboveAvoidsScreenshot) {
+            return false
+        }
+
+        let prefersAbove: Bool
+        if let displayRect {
+            if position.y <= displayRect.minY {
+                prefersAbove = true
+            } else if position.y >= displayRect.maxY {
+                prefersAbove = false
+            } else {
+                prefersAbove = position.y > displayRect.midY
             }
+        } else {
+            prefersAbove = toolbarPlacement.vertical == .top
+        }
+
+        if prefersAbove, aboveFits {
+            return true
+        }
+        if !prefersAbove, belowFits {
+            return false
+        }
+        if aboveFits {
+            return true
+        }
+        if belowFits {
+            return false
+        }
+        return mainTop - canvasBounds.minY >= canvasBounds.maxY - mainBottom
+    }
+
+    private func edgeAdjustedSecondaryOptionsAreAbove(
+        at position: CGPoint,
+        fallback: Bool
+    ) -> Bool {
+        guard let canvasSize = canvasSizeForLayout ?? NSApp.keyWindow?.contentView?.bounds.size else {
+            return fallback
+        }
+        let margin: CGFloat = 8
+        let extraHeight = Self.expandedToolbarHeight - Self.mainToolbarHeight
+        let aboveFits = position.y - Self.mainToolbarHeight / 2 - extraHeight >= margin
+        let belowFits =
+            position.y + Self.mainToolbarHeight / 2 + extraHeight <= canvasSize.height - margin
+
+        if !aboveFits, belowFits {
+            return false
+        }
+        if !belowFits, aboveFits {
+            return true
+        }
+        return fallback
+    }
+
+    private func selectTool(_ tool: ScreenshotEditTool) {
+        commitActiveTextEdit()
+        let wasShowingSecondaryOptions = hasSecondaryToolbar
+        selectedTool = tool
+        let willShowSecondaryOptions = tool.usesStrokeStyle || tool == .text
+        if willShowSecondaryOptions {
+            if !wasShowingSecondaryOptions || secondaryOptionsAbove == nil {
+                secondaryOptionsAbove = preferredSecondaryOptionsAreAbove(at: toolbarPosition)
+            }
+        } else {
+            secondaryOptionsAbove = nil
+        }
     }
 
     private func colorSwatchView(_ color: Color) -> some View {
@@ -619,7 +862,9 @@ struct ScreenshotPreviewView: View {
     }
 
     private var visibleAnnotations: [ScreenshotAnnotation] {
-        annotations + draftAnnotation.map { [$0] }.orEmpty + draftWatermarkAnnotation.map { [$0] }.orEmpty
+        annotations.filter { $0.id != activeTextEdit?.annotation.id } +
+            draftAnnotation.map { [$0] }.orEmpty +
+            draftWatermarkAnnotation.map { [$0] }.orEmpty
     }
 
     private var renderAnnotations: [ScreenshotAnnotation] {
@@ -646,8 +891,7 @@ struct ScreenshotPreviewView: View {
 
     private func toolButton(_ tool: ScreenshotEditTool, _ systemImage: String) -> some View {
         Button {
-            commitActiveTextEdit()
-            selectedTool = tool
+            selectTool(tool)
         } label: {
             Image(systemName: systemImage)
                 .frame(width: 30, height: 30)
@@ -659,8 +903,7 @@ struct ScreenshotPreviewView: View {
 
     private func highlightToolButton() -> some View {
         Button {
-            commitActiveTextEdit()
-            selectedTool = .highlight
+            selectTool(.highlight)
         } label: {
             ZStack {
                 RoundedRectangle(cornerRadius: 2)
@@ -689,6 +932,10 @@ struct ScreenshotPreviewView: View {
             .onChanged { value in
                 guard canvasRect.contains(value.location) else { return }
 
+                if suppressTextCreationOnGestureEnd {
+                    return
+                }
+
                 if activeTextEdit != nil {
                     suppressTextCreationOnGestureEnd = true
                     commitActiveTextEdit()
@@ -701,6 +948,13 @@ struct ScreenshotPreviewView: View {
                 }
 
                 if let hit = hitAnnotation(at: value.startLocation, in: canvasRect) {
+                    if selectedTool == .text,
+                       let index = annotations.firstIndex(where: { $0.id == hit.annotation.id }),
+                       annotations[index].kind == .text {
+                        suppressTextCreationOnGestureEnd = true
+                        beginEditingTextAnnotation(at: index)
+                        return
+                    }
                     selectedAnnotationID = hit.annotation.id
                     if activeAnnotationEdit == nil {
                         pushUndoState()
@@ -769,7 +1023,7 @@ struct ScreenshotPreviewView: View {
                         lineWidth: textFontSize / 5,
                         text: ""
                     )
-                    activeTextEdit = ActiveTextEdit(annotation: annotation, text: "")
+                    activeTextEdit = ActiveTextEdit(annotation: annotation, text: "", existingAnnotationIndex: nil)
                     DispatchQueue.main.async {
                         isTextEditorFocused = true
                     }
@@ -807,7 +1061,10 @@ struct ScreenshotPreviewView: View {
         .frame(width: editorRect.width, height: editorRect.height)
         .overlay(
             RoundedRectangle(cornerRadius: 2)
-                .stroke(selectedColor, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                .stroke(
+                    Color(nsColor: .systemBlue),
+                    lineWidth: 1 / max(1, displayScale)
+                )
         )
         .position(x: editorRect.midX, y: editorRect.midY)
         .clipped()
@@ -832,18 +1089,40 @@ struct ScreenshotPreviewView: View {
 
     private func activeTextEditorRect(baseRect: CGRect, in canvasRect: CGRect) -> CGRect {
         let text = activeTextEdit?.text ?? ""
-        let preferred = preferredTextEditorSize(text: text, minimum: baseRect.size)
+        let maximumSize = CGSize(
+            width: max(40, canvasRect.maxX - baseRect.minX),
+            height: max(32, canvasRect.maxY - baseRect.minY)
+        )
+        let preferred = preferredTextEditorSize(text: text, maximum: maximumSize)
         let width = min(preferred.width, max(40, canvasRect.maxX - baseRect.minX))
         let height = min(preferred.height, max(32, canvasRect.maxY - baseRect.minY))
         return CGRect(x: baseRect.minX, y: baseRect.minY, width: width, height: height)
     }
 
-    private func preferredTextEditorSize(text: String, minimum: CGSize) -> CGSize {
+    private func preferredTextEditorSize(text: String, maximum: CGSize) -> CGSize {
+        let font = NSFont.systemFont(ofSize: textFontSize, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let horizontalPadding: CGFloat = 18
+        let verticalPadding: CGFloat = 14
+        let minimumContentWidth = max(54, textFontSize * 1.5)
+        let maximumContentWidth = max(22, maximum.width - horizontalPadding)
         let lines = text.components(separatedBy: .newlines)
-        let longestLine = lines.map(\.count).max() ?? 0
-        let width = max(100, minimum.width, CGFloat(longestLine) * textFontSize * 0.62 + 28)
-        let height = max(44, minimum.height, CGFloat(max(lines.count, 1)) * (textFontSize + 8) + 20)
-        return CGSize(width: width, height: height)
+        let widestLine = lines
+            .map { ceil((($0.isEmpty ? " " : $0) as NSString).size(withAttributes: attributes).width) }
+            .max() ?? minimumContentWidth
+        let contentWidth = min(max(minimumContentWidth, widestLine), maximumContentWidth)
+        let measuredText = text.isEmpty ? " " : text
+        let textBounds = (measuredText as NSString).boundingRect(
+            with: CGSize(width: contentWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        )
+        let lineHeight = ceil(font.ascender - font.descender + font.leading)
+        let contentHeight = max(lineHeight * CGFloat(max(lines.count, 1)), ceil(textBounds.height))
+        return CGSize(
+            width: min(maximum.width, contentWidth + horizontalPadding),
+            height: min(maximum.height, contentHeight + verticalPadding)
+        )
     }
 
     private func updateActiveTextRect(for text: String, baseRect: CGRect, in canvasRect: CGRect) {
@@ -858,7 +1137,26 @@ struct ScreenshotPreviewView: View {
         let text = edit.text.trimmingCharacters(in: .whitespacesAndNewlines)
         activeTextEdit = nil
         isTextEditorFocused = false
-        guard !text.isEmpty else { return }
+
+        if let index = currentAnnotationIndex(for: edit) {
+            pushUndoState()
+            if text.isEmpty {
+                annotations.remove(at: index)
+                selectedAnnotationID = nil
+                return
+            }
+            edit.annotation.text = text
+            edit.annotation.color = selectedColor.codableColor
+            edit.annotation.lineWidth = textFontSize / 5
+            annotations[index] = edit.annotation
+            selectedAnnotationID = edit.annotation.id
+            return
+        }
+
+        guard !text.isEmpty else {
+            selectedAnnotationID = nil
+            return
+        }
         edit.annotation.text = text
         edit.annotation.color = selectedColor.codableColor
         edit.annotation.lineWidth = textFontSize / 5
@@ -866,6 +1164,31 @@ struct ScreenshotPreviewView: View {
         pushUndoState()
         annotations.append(edit.annotation)
         selectedAnnotationID = edit.annotation.id
+    }
+
+    private func beginEditingTextAnnotation(at index: Int) {
+        guard annotations.indices.contains(index), annotations[index].kind == .text else { return }
+        let annotation = annotations[index]
+        selectedColor = annotation.color.swiftUIColor
+        textFontSize = max(12, annotation.lineWidth * 5)
+        selectedAnnotationID = annotation.id
+        activeTextEdit = ActiveTextEdit(
+            annotation: annotation,
+            text: annotation.text ?? "",
+            existingAnnotationIndex: index
+        )
+        DispatchQueue.main.async {
+            isTextEditorFocused = true
+        }
+    }
+
+    private func currentAnnotationIndex(for edit: ActiveTextEdit) -> Int? {
+        if let index = edit.existingAnnotationIndex,
+           annotations.indices.contains(index),
+           annotations[index].id == edit.annotation.id {
+            return index
+        }
+        return annotations.firstIndex(where: { $0.id == edit.annotation.id })
     }
 
     private func markEditingStarted() {
@@ -988,10 +1311,12 @@ struct ScreenshotPreviewView: View {
 
     private func showWatermarkPanel() {
         if let watermarkPanel {
+            watermarkPanel.level = Self.watermarkPanelLevel
             watermarkPanel.orderFrontRegardless()
             return
         }
 
+        let parentWindow = NSApp.keyWindow
         let panel = WatermarkEditorPanel(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 178),
             styleMask: [.titled, .closable, .nonactivatingPanel],
@@ -1000,7 +1325,9 @@ struct ScreenshotPreviewView: View {
         )
         panel.title = localization.string("screenshot.watermark")
         panel.isFloatingPanel = true
-        panel.level = .floating
+        panel.level = Self.watermarkPanelLevel
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.onClose = {
             isWatermarkEditorPresented = false
@@ -1014,7 +1341,7 @@ struct ScreenshotPreviewView: View {
             onCancel: cancelWatermarkEditing
         ))
 
-        if let parentFrame = NSApp.keyWindow?.frame {
+        if let parentFrame = parentWindow?.frame {
             panel.setFrameOrigin(NSPoint(x: parentFrame.midX - 220, y: parentFrame.midY - 89))
         } else {
             let mouse = NSEvent.mouseLocation
@@ -1022,6 +1349,7 @@ struct ScreenshotPreviewView: View {
         }
 
         watermarkPanel = panel
+        parentWindow?.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
     }
@@ -1535,6 +1863,7 @@ struct ScreenshotToolbarPlacement {
 private struct ActiveTextEdit {
     var annotation: ScreenshotAnnotation
     var text: String
+    var existingAnnotationIndex: Int?
 }
 
 private enum AnnotationLineWidth: CaseIterable, Identifiable {
@@ -1617,6 +1946,9 @@ private final class ScreenshotPreviewKeyboardNSView: NSView {
             if Int(event.keyCode) == kVK_Escape {
                 self.onEscape?()
                 return nil
+            }
+            if self.window?.firstResponder is NSTextView {
+                return event
             }
             if Int(event.keyCode) == kVK_ANSI_Z, event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
                 self.onUndo?()

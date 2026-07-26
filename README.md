@@ -252,7 +252,7 @@ Builds the Release configuration, signs it with the configured identity, verifie
 For a local ad-hoc build:
 
 ```sh
-VERSION=0.0.1 BUNDLE_ID=com.yourname.Wetools make release-local
+VERSION=0.0.2 BUNDLE_ID=com.yourname.Wetools make release-local
 ```
 
 For public distribution, set `SIGN_IDENTITY` to a Developer ID Application certificate and notarize the resulting DMG before publishing.
