@@ -18,6 +18,7 @@ struct ScreenshotPreviewView: View {
     let allowsZoom: Bool
     let toolbarPlacement: ScreenshotToolbarPlacement
     let onEditingStarted: () -> Void
+    let onImageCopied: () -> Void
 
     @State private var selectedTool: ScreenshotEditTool?
     @State private var annotations: [ScreenshotAnnotation] = []
@@ -133,6 +134,7 @@ struct ScreenshotPreviewView: View {
         .background(
             ScreenshotPreviewKeyboardView(
                 onEscape: { NSApp.keyWindow?.close() },
+                onReturn: copyImageAndClose,
                 onUndo: undo,
                 onDelete: deleteSelectedAnnotation
             )
@@ -1374,8 +1376,12 @@ struct ScreenshotPreviewView: View {
         let output = renderedImage()
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.writeObjects([output])
-        NSApp.keyWindow?.close()
+        let didCopy = pasteboard.writeObjects([output])
+        let editorWindow = NSApp.keyWindow
+        editorWindow?.close()
+        if didCopy {
+            onImageCopied()
+        }
     }
 
     private func saveImage() {
@@ -1927,12 +1933,14 @@ private struct AnnotationColorSwatch: Identifiable {
 
 private struct ScreenshotPreviewKeyboardView: NSViewRepresentable {
     let onEscape: () -> Void
+    let onReturn: () -> Void
     let onUndo: () -> Void
     let onDelete: () -> Void
 
     func makeNSView(context: Context) -> ScreenshotPreviewKeyboardNSView {
         let view = ScreenshotPreviewKeyboardNSView()
         view.onEscape = onEscape
+        view.onReturn = onReturn
         view.onUndo = onUndo
         view.onDelete = onDelete
         return view
@@ -1940,6 +1948,7 @@ private struct ScreenshotPreviewKeyboardView: NSViewRepresentable {
 
     func updateNSView(_ nsView: ScreenshotPreviewKeyboardNSView, context: Context) {
         nsView.onEscape = onEscape
+        nsView.onReturn = onReturn
         nsView.onUndo = onUndo
         nsView.onDelete = onDelete
     }
@@ -1947,6 +1956,7 @@ private struct ScreenshotPreviewKeyboardView: NSViewRepresentable {
 
 private final class ScreenshotPreviewKeyboardNSView: NSView {
     var onEscape: (() -> Void)?
+    var onReturn: (() -> Void)?
     var onUndo: (() -> Void)?
     var onDelete: (() -> Void)?
     private var localMonitor: Any?
@@ -1972,6 +1982,10 @@ private final class ScreenshotPreviewKeyboardNSView: NSView {
             }
             if self.window?.firstResponder is NSTextView {
                 return event
+            }
+            if Int(event.keyCode) == kVK_Return || Int(event.keyCode) == kVK_ANSI_KeypadEnter {
+                self.onReturn?()
+                return nil
             }
             if Int(event.keyCode) == kVK_ANSI_Z, event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
                 self.onUndo?()

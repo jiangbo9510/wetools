@@ -81,6 +81,7 @@
 "ocr.defaultFileName" = "ocr.txt";
 
 "screenshot.copyImage" = "Copy Image";
+"screenshot.copiedToClipboard" = "Screenshot copied to clipboard";
 "screenshot.saveImage" = "Save Image";
 "screenshot.defaultFileName" = "screenshot.png";
 "screenshot.preview" = "Screenshot Preview";

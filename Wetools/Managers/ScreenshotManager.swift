@@ -35,6 +35,7 @@ final class ScreenshotManager {
     private var recordingFinishTask: Task<Void, Never>?
     private var recordingPreviewWindowController: NSWindowController?
     private var previewWindowController: NSWindowController?
+    private var screenshotCopyToastWindow: NSPanel?
     private var escapeLocalMonitor: Any?
     private var escapeGlobalMonitor: Any?
     private var retiredWindows: [NSWindow] = []
@@ -104,12 +105,12 @@ final class ScreenshotManager {
         guard requestScreenCapturePermissionIfNeeded() else { return }
         installEscapeMonitors()
         guard let screen = NSScreen.main else { return }
-        let window = ScreenshotSelectionWindow(screen: screen, localization: localization, showsModeSelector: true) { [weak self] mode, screen, rect in
+        let window = ScreenshotSelectionWindow(screen: screen, localization: localization, showsModeSelector: true) { [weak self] mode, screen, rect, finishToClipboard in
             self?.finishSelectionWindow()
             guard let self, let screen, let rect else { return }
             switch mode {
             case .screenshot:
-                self.captureArea(on: screen, rect: rect)
+                self.captureArea(on: screen, rect: rect, finishToClipboard: finishToClipboard)
             case .scrolling:
                 self.showScrollingPanel(screen: screen, rect: rect)
             case .recording:
@@ -123,10 +124,10 @@ final class ScreenshotManager {
         guard requestScreenCapturePermissionIfNeeded() else { return }
         installEscapeMonitors()
         guard let screen = NSScreen.main else { return }
-        let window = ScreenshotSelectionWindow(screen: screen, localization: localization) { [weak self] _, screen, rect in
+        let window = ScreenshotSelectionWindow(screen: screen, localization: localization) { [weak self] _, screen, rect, finishToClipboard in
             self?.finishSelectionWindow()
             guard let screen, let rect else { return }
-            self?.captureArea(on: screen, rect: rect)
+            self?.captureArea(on: screen, rect: rect, finishToClipboard: finishToClipboard)
         }
         showSelectionWindow(window)
     }
@@ -152,7 +153,7 @@ final class ScreenshotManager {
         guard requestScreenCapturePermissionIfNeeded() else { return }
         installEscapeMonitors()
         guard let screen = NSScreen.main else { return }
-        let window = ScreenshotSelectionWindow(screen: screen, localization: localization, initialMode: .scrolling) { [weak self] _, screen, rect in
+        let window = ScreenshotSelectionWindow(screen: screen, localization: localization, initialMode: .scrolling) { [weak self] _, screen, rect, _ in
             self?.finishSelectionWindow()
             guard let self, let screen, let rect else { return }
             self.showScrollingPanel(screen: screen, rect: rect)
@@ -164,7 +165,7 @@ final class ScreenshotManager {
         guard requestScreenCapturePermissionIfNeeded() else { return }
         installEscapeMonitors()
         guard let screen = NSScreen.main else { return }
-        let window = ScreenshotSelectionWindow(screen: screen, localization: localization, initialMode: .recording) { [weak self] _, screen, rect in
+        let window = ScreenshotSelectionWindow(screen: screen, localization: localization, initialMode: .recording) { [weak self] _, screen, rect, _ in
             self?.finishSelectionWindow()
             guard let self, let screen, let rect else { return }
             self.showRecordingPanel(screen: screen, rect: rect)
@@ -818,15 +819,21 @@ final class ScreenshotManager {
         )
     }
 
-    private func captureArea(on screen: NSScreen, rect: NSRect) {
+    private func captureArea(on screen: NSScreen, rect: NSRect, finishToClipboard: Bool = false) {
         Task { @MainActor in
             do {
                 try await Task.sleep(nanoseconds: 120_000_000)
-                let screenImage = try await screenshotService.captureFullScreen(on: screen)
                 let image = try await screenshotService.captureArea(on: screen, rect: rect)
                 let cornerRadius = selectedWindowCornerRadius(for: rect, on: screen)
                 let previewImage = cornerRadius > 0 ? image.withRoundedCorners(radius: cornerRadius) : image
-                openPreview(image: previewImage, screenImage: screenImage, sourceRect: rect)
+                if finishToClipboard {
+                    if copyToPasteboard(previewImage) {
+                        showScreenshotCopiedToast()
+                    }
+                } else {
+                    let screenImage = try await screenshotService.captureFullScreen(on: screen)
+                    openPreview(image: previewImage, screenImage: screenImage, sourceRect: rect)
+                }
             } catch {
                 showCaptureError(error)
             }
@@ -855,6 +862,9 @@ final class ScreenshotManager {
             toolbarPlacement: toolbarPlacement(for: sourceRect, in: sourceRect.flatMap { screen(containing: $0) }),
             onEditingStarted: {
                 previewWindow?.isMovableByWindowBackground = false
+            },
+            onImageCopied: { [weak self] in
+                self?.showScreenshotCopiedToast()
             }
         )
         let hostingController = NSHostingController(rootView: view)
@@ -1143,10 +1153,60 @@ final class ScreenshotManager {
         }
     }
 
-    private func copyToPasteboard(_ image: NSImage) {
+    @discardableResult
+    private func copyToPasteboard(_ image: NSImage) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.writeObjects([image])
+        return pasteboard.writeObjects([image])
+    }
+
+    private func showScreenshotCopiedToast() {
+        screenshotCopyToastWindow?.close()
+
+        let content = HStack(spacing: 9) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Text(localization.string("screenshot.copiedToClipboard"))
+                .foregroundStyle(.white)
+                .font(.system(size: 14, weight: .medium))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(.black.opacity(0.86), in: RoundedRectangle(cornerRadius: 8))
+
+        let hostingView = NSHostingView(rootView: content)
+        hostingView.layoutSubtreeIfNeeded()
+        let size = hostingView.fittingSize
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main
+        let visibleFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1200, height: 800)
+        let panel = NSPanel(
+            contentRect: NSRect(
+                x: visibleFrame.midX - size.width / 2,
+                y: visibleFrame.maxY - size.height - 28,
+                width: size.width,
+                height: size.height
+            ),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isReleasedWhenClosed = false
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 3)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = true
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.contentView = hostingView
+        panel.orderFrontRegardless()
+        screenshotCopyToastWindow = panel
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self, weak panel] in
+            guard let self, self.screenshotCopyToastWindow === panel else { return }
+            self.screenshotCopyToastWindow = nil
+            panel?.close()
+        }
     }
 
     private func showUnsupportedNotice(messageKey: String) {
@@ -1761,7 +1821,7 @@ private final class ScreenshotSelectionWindow: NSWindow {
         localization: LocalizationManager,
         initialMode: ScreenshotCaptureMode = .screenshot,
         showsModeSelector: Bool = false,
-        completion: @escaping (ScreenshotCaptureMode, NSScreen?, NSRect?) -> Void
+        completion: @escaping (ScreenshotCaptureMode, NSScreen?, NSRect?, Bool) -> Void
     ) {
         let view = ScreenshotSelectionView(
             frame: screen.frame,
@@ -2008,7 +2068,7 @@ private final class ScreenshotSelectionView: NSView {
     var screenForCapture: NSScreen?
 
     private let localization: LocalizationManager
-    private let completion: (ScreenshotCaptureMode, NSScreen?, NSRect?) -> Void
+    private let completion: (ScreenshotCaptureMode, NSScreen?, NSRect?, Bool) -> Void
     private let showsModeSelector: Bool
     private var selectedMode: ScreenshotCaptureMode
     private var startPoint: NSPoint?
@@ -2022,7 +2082,7 @@ private final class ScreenshotSelectionView: NSView {
         localization: LocalizationManager,
         initialMode: ScreenshotCaptureMode,
         showsModeSelector: Bool,
-        completion: @escaping (ScreenshotCaptureMode, NSScreen?, NSRect?) -> Void
+        completion: @escaping (ScreenshotCaptureMode, NSScreen?, NSRect?, Bool) -> Void
     ) {
         self.localization = localization
         self.completion = completion
@@ -2091,30 +2151,51 @@ private final class ScreenshotSelectionView: NSView {
         if let selection = selectionRect, selection.width > 8, selection.height > 8 {
             let screenRect = convert(selection, to: nil)
             let globalRect = window?.convertToScreen(screenRect) ?? screenRect
-            completeAfterCurrentEvent(screen: screenForCapture, rect: globalRect)
+            completeAfterCurrentEvent(screen: screenForCapture, rect: globalRect, finishToClipboard: false)
             return
         }
 
-        completeAfterCurrentEvent(screen: screenForCapture, rect: hoveredGlobalRect ?? screenForCapture?.frame)
+        completeAfterCurrentEvent(
+            screen: screenForCapture,
+            rect: hoveredGlobalRect ?? screenForCapture?.frame,
+            finishToClipboard: false
+        )
     }
 
     override func keyDown(with event: NSEvent) {
         if Int(event.keyCode) == kVK_Escape {
-            completeAfterCurrentEvent(screen: nil, rect: nil)
+            completeAfterCurrentEvent(screen: nil, rect: nil, finishToClipboard: false)
+        } else if Int(event.keyCode) == kVK_Return || Int(event.keyCode) == kVK_ANSI_KeypadEnter {
+            let rect: NSRect?
+            if let selection = selectionRect, selection.width > 8, selection.height > 8 {
+                let screenRect = convert(selection, to: nil)
+                rect = window?.convertToScreen(screenRect) ?? screenRect
+            } else {
+                rect = hoveredGlobalRect ?? screenForCapture?.frame
+            }
+            completeAfterCurrentEvent(
+                screen: screenForCapture,
+                rect: rect,
+                finishToClipboard: selectedMode == .screenshot
+            )
         } else {
             super.keyDown(with: event)
         }
     }
 
-    private func completeAfterCurrentEvent(screen: NSScreen?, rect: NSRect?) {
+    private func completeAfterCurrentEvent(
+        screen: NSScreen?,
+        rect: NSRect?,
+        finishToClipboard: Bool
+    ) {
         guard let window else {
-            completion(selectedMode, screen, rect)
+            completion(selectedMode, screen, rect, finishToClipboard)
             return
         }
 
         window.orderOut(nil)
         DispatchQueue.main.async { [completion, selectedMode] in
-            completion(selectedMode, screen, rect)
+            completion(selectedMode, screen, rect, finishToClipboard)
         }
     }
 

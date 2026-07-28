@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-VERSION="${VERSION:-0.0.3}"
+VERSION="${VERSION:-0.0.4}"
 BUNDLE_ID="${BUNDLE_ID:-com.yourname.Wetools}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

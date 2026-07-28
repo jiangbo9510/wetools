@@ -81,6 +81,7 @@
 "ocr.defaultFileName" = "ocr.txt";
 
 "screenshot.copyImage" = "复制图片";
+"screenshot.copiedToClipboard" = "截图已复制到剪贴板";
 "screenshot.saveImage" = "保存图片";
 "screenshot.defaultFileName" = "screenshot.png";
 "screenshot.preview" = "截图预览";
